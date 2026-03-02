@@ -314,6 +314,27 @@ async def delete_session(project_id: str):
     return {"success": False, "message": f"No session found for {project_id}"}
 
 
+@app.post("/gateway/restart")
+async def gateway_restart():
+    """Restart the OpenClaw gateway."""
+    import subprocess
+    script = os.path.expanduser("~/xo-cowork-api/openclaw.sh")
+    try:
+        result = subprocess.run(
+            [script, "restart"],
+            capture_output=True, text=True, timeout=30
+        )
+        return {
+            "status": "restarted" if result.returncode == 0 else "error",
+            "output": result.stdout,
+            "error": result.stderr if result.returncode != 0 else None
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "Restart timed out after 30s"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
 @app.post("/ask_question")
 async def ask_question(data: AskQuestionRequest):
     """
