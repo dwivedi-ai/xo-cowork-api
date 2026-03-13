@@ -32,6 +32,7 @@ from routers.auth import (
     get_auth_state,
     router as auth_router,
 )
+from routers.claude_setup_token import router as claude_setup_token_router
 
 
 # =============================================================================
@@ -373,6 +374,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(claude_setup_token_router)
 
 
 # =============================================================================
