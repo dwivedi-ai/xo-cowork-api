@@ -33,6 +33,7 @@ from routers.auth import (
     router as auth_router,
 )
 from routers.claude_setup_token import router as claude_setup_token_router
+from routers.openclaw_usage import router as openclaw_usage_router
 
 
 # =============================================================================
