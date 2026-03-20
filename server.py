@@ -7,6 +7,8 @@ import os
 import json
 import datetime
 import uuid
+import shutil
+from pathlib import Path
 from typing import Optional, Dict, Any, AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -24,12 +26,14 @@ from codex_code_client import CodexCodeClient
 load_dotenv()
 
 from routers.auth import (
-    CHAT_API_TOKEN,
+    XO_API_KEY,
     consume_auth_flow,
     get_auth_token,
     get_auth_state,
     router as auth_router,
 )
+from routers.claude_setup_token import router as claude_setup_token_router
+from routers.openclaw_usage import router as openclaw_usage_router
 
 
 # =============================================================================
@@ -38,12 +42,71 @@ from routers.auth import (
 
 # External Chat API base URL (xo-swarm-api or similar)
 CHAT_API_BASE_URL = os.getenv("CHAT_API_BASE_URL", "https://api-swarm-beta.xo.builders")
+STAGE = (os.getenv("STAGE", "beta") or "beta").strip().lower()
+IS_LOCAL_STAGE = STAGE == "local"
 
-# Claude Code CLI path (defaults to 'claude' assuming it's in PATH)
-# CLAUDE_CLI_PATH = os.getenv("CLAUDE_CLI_PATH", "claude")
-CLAUDE_CLI_PATH = os.getenv("CLAUDE_CLI_PATH", "/home/coder/.local/bin/claude")
-# Codex CLI path (defaults to 'codex' assuming it's in PATH)
-CODEX_CLI_PATH = os.getenv("CODEX_CLI_PATH", "codex")
+# Resolve runtime paths using stage-aware defaults.
+def _resolve_cli_path(env_var: str, default_cmd: str, beta_default: str) -> str:
+    configured = (os.getenv(env_var, "") or "").strip()
+    if configured:
+        if IS_LOCAL_STAGE and os.path.isabs(configured) and not os.path.exists(configured):
+            print(
+                f"⚠️ {env_var} points to missing path: {configured}. "
+                f"Falling back to '{default_cmd}' from PATH."
+            )
+        elif IS_LOCAL_STAGE:
+            return configured
+        else:
+            return configured
+
+    if IS_LOCAL_STAGE:
+        discovered = shutil.which(default_cmd)
+        if discovered:
+            return discovered
+        return default_cmd
+
+    return beta_default
+
+
+def _resolve_workspace_root() -> str:
+    configured = (os.getenv("AI_WORKSPACE_ROOT", "") or "").strip()
+    if configured:
+        if IS_LOCAL_STAGE and not os.path.isdir(configured):
+            print(
+                f"⚠️ AI_WORKSPACE_ROOT does not exist: {configured}. "
+                "Falling back to project directory."
+            )
+        else:
+            return configured
+
+    if IS_LOCAL_STAGE:
+        return str(Path(__file__).resolve().parent)
+
+    return "/home/coder"
+
+
+# Claude Code CLI path
+CLAUDE_CLI_PATH = _resolve_cli_path(
+    env_var="CLAUDE_CLI_PATH",
+    default_cmd="claude",
+    beta_default="/home/coder/.local/bin/claude",
+)
+# Codex CLI path
+CODEX_CLI_PATH = _resolve_cli_path(
+    env_var="CODEX_CLI_PATH",
+    default_cmd="codex",
+    beta_default="codex",
+)
+
+
+AI_WORKSPACE_ROOT = _resolve_workspace_root()
+
+if IS_LOCAL_STAGE and not os.path.isdir(AI_WORKSPACE_ROOT):
+    print(
+        f"⚠️ AI_WORKSPACE_ROOT does not exist: {AI_WORKSPACE_ROOT}. "
+        "Falling back to project directory (local stage)."
+    )
+    AI_WORKSPACE_ROOT = str(Path(__file__).resolve().parent)
 
 # HTTP client timeout settings
 HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
@@ -56,7 +119,46 @@ CODEX_TIMEOUT = int(os.getenv("CODEX_TIMEOUT", str(CLAUDE_TIMEOUT)))
 # Runtime provider switch: claude | codex
 AI_PROVIDER = os.getenv("AI_PROVIDER", "claude").strip().lower()
 CLAUDE_PERMISSION_MODE = os.getenv("CLAUDE_PERMISSION_MODE", "bypassPermissions").strip()
-AI_WORKSPACE_ROOT = os.getenv("AI_WORKSPACE_ROOT", "/home/coder").strip()
+
+def _claude_auth_debug_snapshot() -> Dict[str, Any]:
+    """
+    Return a safe, non-secret snapshot of Claude auth-related environment state.
+    """
+    claude_oauth_token = (os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
+    anthropic_api_key = (os.getenv("ANTHROPIC_API_KEY", "") or "").strip()
+    anthropic_oauth_api_key = (os.getenv("ANTHROPIC_OAUTH_API_KEY", "") or "").strip()
+
+    has_claude_oauth = bool(claude_oauth_token)
+    has_anthropic_api = bool(anthropic_api_key)
+    has_anthropic_oauth_api = bool(anthropic_oauth_api_key)
+
+    present_sources = []
+    if has_claude_oauth:
+        present_sources.append("CLAUDE_CODE_OAUTH_TOKEN")
+    if has_anthropic_oauth_api:
+        present_sources.append("ANTHROPIC_OAUTH_API_KEY")
+    if has_anthropic_api:
+        present_sources.append("ANTHROPIC_API_KEY")
+
+    if has_claude_oauth:
+        likely_source = "CLAUDE_CODE_OAUTH_TOKEN"
+    elif has_anthropic_oauth_api:
+        likely_source = "ANTHROPIC_OAUTH_API_KEY"
+    elif has_anthropic_api:
+        likely_source = "ANTHROPIC_API_KEY"
+    else:
+        likely_source = "none_detected"
+
+    return {
+        "env_presence": {
+            "CLAUDE_CODE_OAUTH_TOKEN": has_claude_oauth,
+            "ANTHROPIC_OAUTH_API_KEY": has_anthropic_oauth_api,
+            "ANTHROPIC_API_KEY": has_anthropic_api,
+        },
+        "present_sources": present_sources,
+        "multiple_sources_set": len(present_sources) > 1,
+        "likely_auth_source": likely_source,
+    }
 
 
 # =============================================================================
@@ -103,12 +205,11 @@ class AskQuestionRequest(BaseModel):
 class ChatAPIClient:
     """Client for external Chat API endpoints."""
 
-    def __init__(self, base_url: str = CHAT_API_BASE_URL, token: Optional[str] = CHAT_API_TOKEN):
+    def __init__(self, base_url: str = CHAT_API_BASE_URL):
         self.base_url = base_url.rstrip("/")
-        self._fallback_token = token
 
     def _headers(self) -> Dict[str, str]:
-        token = get_auth_token() or self._fallback_token
+        token = get_auth_token()
         return {"Authorization": f"Bearer {token}"} if token else {}
 
     async def push_message(
@@ -224,7 +325,10 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     print("🚀 Starting XO Cowork API Server...")
     print(f"   Chat API: {CHAT_API_BASE_URL}")
-    print(f"   Chat API auth: {'enabled (dynamic token or CHAT_API_TOKEN)' if (get_auth_token() or CHAT_API_TOKEN) else 'not set'}")
+    _tok = get_auth_token()
+    _src = get_auth_state().get("token_source", "none")
+    print(f"   Chat API auth: {'enabled (' + _src + ')' if _tok else 'not set'}")
+    print(f"   Stage: {STAGE}")
     print(f"   AI Provider: {AI_PROVIDER}")
     print(f"   Claude CLI: {CLAUDE_CLI_PATH} (timeout={CLAUDE_TIMEOUT}s)")
     print(f"   Claude Permission Mode: {CLAUDE_PERMISSION_MODE}")
@@ -234,8 +338,10 @@ async def lifespan(app: FastAPI):
     print("   Skills: .agents/skills + AGENTS.md (Codex-native)")
     startup_auth_session_id = os.getenv("XO_AUTH_SESSION_ID", "").strip()
     startup_poll_token = os.getenv("XO_POLL_TOKEN", "").strip()
-    if startup_auth_session_id and startup_poll_token:
-        print("   XO startup consume: configured, attempting token consume")
+    if XO_API_KEY:
+        print("   XO auth: using XO_API_KEY (no consume)")
+    elif startup_auth_session_id and startup_poll_token:
+        print("   XO startup consume: attempting token consume")
         try:
             await consume_auth_flow(
                 auth_session_id=startup_auth_session_id,
@@ -269,6 +375,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(claude_setup_token_router)
 
 
 # =============================================================================
@@ -288,11 +395,30 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
         "chat_api_url": CHAT_API_BASE_URL,
+        "stage": STAGE,
         "auth": get_auth_state(),
         "ai_provider": AI_PROVIDER,
         "claude_cli": CLAUDE_CLI_PATH,
         "codex_cli": CODEX_CLI_PATH,
         "active_sessions": len(session_store)
+    }
+
+
+@app.get("/debug/ai-auth")
+async def debug_ai_auth():
+    """Debug endpoint to inspect effective AI auth configuration (safe output)."""
+    snapshot = _claude_auth_debug_snapshot()
+    return {
+        "stage": STAGE,
+        "ai_provider": AI_PROVIDER,
+        "claude_cli": CLAUDE_CLI_PATH,
+        "claude_permission_mode": CLAUDE_PERMISSION_MODE,
+        "ai_workspace_root": AI_WORKSPACE_ROOT,
+        "auth_debug": snapshot,
+        "note": (
+            "Secrets are never returned. This is a best-effort hint based on server env; "
+            "CLI internals may apply their own precedence."
+        ),
     }
 
 
