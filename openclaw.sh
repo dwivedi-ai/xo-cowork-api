@@ -228,11 +228,21 @@ enable_channels() {
     # Ensure WhatsApp credentials directory exists
     mkdir -p "$OPENCLAW_DIR/credentials/whatsapp/default"
 
-    # Determine primary model based on available API keys
+    # Determine primary model: explicit MODEL_PROVIDER wins, else auto-detect from keys
     local primary_model="anthropic/claude-opus-4-6"
-    if [ -n "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-        primary_model="openai/gpt-5.4"
-    fi
+    case "${MODEL_PROVIDER:-}" in
+        openai)
+            primary_model="openai/gpt-5.4"
+            ;;
+        anthropic)
+            primary_model="anthropic/claude-opus-4-6"
+            ;;
+        *)
+            if [ -n "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+                primary_model="openai/gpt-5.4"
+            fi
+            ;;
+    esac
     log "Primary model provider: $primary_model"
 
     if command -v jq &>/dev/null; then
