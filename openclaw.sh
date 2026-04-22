@@ -471,6 +471,38 @@ install_cli() {
 }
 
 # ==============================================================
+# Setup: Install missing peer deps for OpenClaw extensions
+# OpenClaw 2026.4.21 slack extension imports @slack/web-api but
+# doesn't bundle it — `openclaw doctor` crashes with "Cannot find
+# module" even when Slack is disabled (it eagerly loads all extensions).
+# Only needed when Slack is enabled, since doctor is then required to
+# register Slack bot auth; gateway runtime only loads enabled channels.
+# ==============================================================
+install_openclaw_peer_deps() {
+    if ! command -v npm &>/dev/null; then
+        log_warn "npm not found — cannot install OpenClaw peer deps"
+        return 0
+    fi
+
+    local openclaw_dir
+    openclaw_dir="$(npm root -g 2>/dev/null)/openclaw"
+    if [ ! -d "$openclaw_dir" ]; then
+        log_warn "OpenClaw install dir not found at $openclaw_dir — falling back to global install"
+        npm install -g @slack/web-api 2>&1 \
+            && log_success "Installed @slack/web-api globally" \
+            || log_warn "Failed to install @slack/web-api"
+        return 0
+    fi
+
+    log "Installing @slack/web-api into $openclaw_dir..."
+    if (cd "$openclaw_dir" && npm install --no-save @slack/web-api 2>&1); then
+        log_success "Installed @slack/web-api into OpenClaw"
+    else
+        log_warn "Failed to install @slack/web-api — slack extension may fail"
+    fi
+}
+
+# ==============================================================
 # Gateway: Check if running
 # ==============================================================
 is_running() {
@@ -778,13 +810,27 @@ run_setup() {
     install_env
     enable_channels
     install_cli
-    log "Running config doctor..."
-    if openclaw doctor --repair --non-interactive 2>&1 \
-       || openclaw doctor --repair 2>&1 \
-       || openclaw doctor --non-interactive 2>&1; then
-        log_success "Config validated"
+    # Only run doctor if Slack is enabled OR @slack/web-api is already available.
+    # OpenClaw doctor eagerly loads the slack extension module, which crashes
+    # with "Cannot find module '@slack/web-api'" (OpenClaw 2026.4.21 packaging bug).
+    # gateway runtime only loads enabled channels, so it's unaffected.
+    local slack_active="${SLACK_ENABLED:-false}"
+    if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
+        slack_active=true
+    fi
+    if [ "$slack_active" = "true" ]; then
+        log "Slack enabled — installing @slack/web-api before running doctor..."
+        install_openclaw_peer_deps
+        log "Running config doctor..."
+        if openclaw doctor --repair --non-interactive 2>&1 \
+           || openclaw doctor --repair 2>&1 \
+           || openclaw doctor --non-interactive 2>&1; then
+            log_success "Config validated"
+        else
+            log_warn "openclaw doctor failed — config may need manual review"
+        fi
     else
-        log_warn "openclaw doctor failed — config may need manual review"
+        log "Slack not enabled — skipping doctor (avoids @slack/web-api load bug)"
     fi
     ensure_gateway_mode
     install_gateway_guard
