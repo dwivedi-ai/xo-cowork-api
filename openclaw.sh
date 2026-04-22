@@ -819,7 +819,7 @@ run_setup() {
         log_warn "openclaw doctor not available or config needs manual review"
     fi
     ensure_gateway_mode
-    ensure_primary_model
+    # ensure_primary_model  # disabled — was clobbering doctor's state and breaking first-time telegram
     install_gateway_guard
     start_gateway
 }
