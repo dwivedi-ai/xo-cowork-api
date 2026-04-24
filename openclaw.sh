@@ -256,6 +256,12 @@ enable_channels() {
                     mode: "local",
                     controlUi: {
                         dangerouslyDisableDeviceAuth: true
+                    },
+                    http: {
+                        endpoints: {
+                            chatCompletions: { enabled: true },
+                            responses: { enabled: true }
+                        }
                     }
                 },
                 commands: { native: "auto", nativeSkills: "auto" },
@@ -344,6 +350,12 @@ enable_channels() {
     "controlUi": {
       "allowedOrigins": ["${control_ui_origin}"],
       "dangerouslyDisableDeviceAuth": true
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
     }
   },
   "commands": { "native": "auto", "nativeSkills": "auto" },
@@ -377,6 +389,12 @@ EOJSON
     "mode": "local",
     "controlUi": {
       "dangerouslyDisableDeviceAuth": true
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
     }
   },
   "commands": { "native": "auto", "nativeSkills": "auto" },
@@ -437,6 +455,32 @@ ensure_gateway_mode() {
 }
 
 # ==============================================================
+# Setup: Ensure gateway.http.endpoints is present (idempotent patch)
+#
+# Applied on every `setup` run so existing workspaces get the field
+# added without needing to delete openclaw.json. Safe on fresh configs
+# too — values are only written if missing.
+# ==============================================================
+ensure_http_endpoints() {
+    [ -f "$CONFIG_FILE" ] || return 0
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not available — skipping gateway.http.endpoints patch"
+        return 0
+    fi
+    local tmp
+    tmp=$(jq '
+        .gateway //= {}
+        | .gateway.http //= {}
+        | .gateway.http.endpoints //= {}
+        | .gateway.http.endpoints.chatCompletions //= {}
+        | .gateway.http.endpoints.chatCompletions.enabled //= true
+        | .gateway.http.endpoints.responses //= {}
+        | .gateway.http.endpoints.responses.enabled //= true
+    ' "$CONFIG_FILE") && echo "$tmp" > "$CONFIG_FILE"
+    log_success "Ensured gateway.http.endpoints.{chatCompletions,responses}.enabled"
+}
+
+# ==============================================================
 # Setup: Install OpenClaw CLI
 # ==============================================================
 install_cli() {
@@ -476,7 +520,8 @@ install_cli() {
 # Some OpenClaw releases ship extensions that import npm packages
 # they don't bundle (e.g. "Cannot find module: @slack/web-api").
 # Add entries to OPENCLAW_PEER_DEPS below and they will be installed
-# globally on every setup.
+# into the OpenClaw module dir on every setup (idempotent — skips
+# packages already present).
 # ==============================================================
 
 OPENCLAW_PEER_DEPS=(
@@ -811,6 +856,7 @@ run_setup() {
         log_warn "openclaw doctor not available or config needs manual review"
     fi
     ensure_gateway_mode
+    ensure_http_endpoints
     install_gateway_guard
     start_gateway
 }
