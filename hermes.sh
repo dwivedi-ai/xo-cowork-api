@@ -256,6 +256,13 @@ install_cli() {
         cd "$HOME"
     fi
 
+    # Ensure uv is available — pip fails with resolution-too-deep on Hermes's dep graph
+    if ! command -v uv &>/dev/null; then
+        log "uv not found — installing via curl..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    fi
+
     # Set up Python venv and install
     cd "$HERMES_REPO"
 
