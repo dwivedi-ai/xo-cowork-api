@@ -41,16 +41,13 @@ _AGENT_NAME = os.getenv("AGENT_NAME", "openclaw")
 
 
 def _resolve_backend_for_session(session_id: str) -> str | None:
-    """Return 'claude_code' if session_id belongs to a Claude Code session, else None."""
-    # New index format: ~/claude-cowork/agents/*/sessions/sessions.json
-    from services.cowork_agent.adapters.claude_code.adapter import find_session_key_for_session_id
-    if find_session_key_for_session_id(session_id) is not None:
-        return "claude_code"
-    # Old format: ~/claude-cowork/{agent_id}/.sessions/{session_id}.json
-    from services.cowork_agent.claude_sessions import load_session
-    if load_session(session_id) is not None:
-        return "claude_code"
-    return None
+    """Return the adapter name that owns session_id, or None (caller uses AGENT_NAME default).
+
+    Delegates to find_session_backend() which is driven by each adapter's sessions_root().
+    Adding a new adapter only requires implementing sessions_root() — this function is zero-touch.
+    """
+    from services.cowork_agent.sessions_io import find_session_backend
+    return find_session_backend(session_id)
 
 
 _KEEPALIVE_INTERVAL = 20  # seconds of silence before emitting an SSE keepalive comment
@@ -162,6 +159,8 @@ async def chat_prompt(request: Request):
 
     if not agent_name:
         agent_name = _AGENT_NAME
+
+    print(f"[chat] routing → agent_name={agent_name!r} session_id={session_id!r} workspace={body.get('workspace')!r}")
 
     # Non-OpenClaw agents: use AgentDispatcher
     if agent_name != "openclaw":

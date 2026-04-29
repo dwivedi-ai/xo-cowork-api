@@ -245,6 +245,10 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
     def adapter_name(self) -> str:
         return "claude_code"
 
+    @classmethod
+    def sessions_root(cls) -> Path:
+        return CLAUDE_COWORK_DIR
+
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
         self.commands = self.load_commands()

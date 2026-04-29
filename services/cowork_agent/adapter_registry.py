@@ -23,3 +23,17 @@ def get_adapter(name: str, config: dict) -> BaseAgentAdapter:
 
 def list_adapters() -> list[str]:
     return list(_REGISTRY.keys())
+
+
+def get_sessions_roots() -> "dict[str, pathlib.Path]":
+    """Return {adapter_name: sessions_root} for every adapter that declares one.
+
+    Used by find_session_backend() so new adapters only need to override
+    sessions_root() in their class — no other files need touching.
+    """
+    import pathlib
+    return {
+        name: root
+        for name, cls in _REGISTRY.items()
+        if (root := cls.sessions_root()) is not None
+    }

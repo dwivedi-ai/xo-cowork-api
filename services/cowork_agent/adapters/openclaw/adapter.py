@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 import uuid
 from typing import Any, AsyncIterator
 
@@ -11,6 +12,11 @@ class OpenclawAdapter(BaseAgentAdapter):
     @property
     def adapter_name(self) -> str:
         return "openclaw"
+
+    @classmethod
+    def sessions_root(cls) -> "pathlib.Path":
+        from services.cowork_agent.settings import AGENTS_DIR
+        return AGENTS_DIR
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)

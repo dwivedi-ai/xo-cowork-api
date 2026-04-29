@@ -65,3 +65,15 @@ class BaseAgentAdapter(ABC):
     @abstractmethod
     def adapter_name(self) -> str:
         """Snake-case name matching the config/agents/ directory, e.g. 'claude_code'."""
+
+    # ── Optional override for session ownership detection ─────────────────────
+
+    @classmethod
+    def sessions_root(cls) -> "pathlib.Path | None":
+        """Root directory whose immediate subdirs each contain a sessions/ folder.
+
+        Used by find_session_backend() to detect which adapter owns a session.
+        Return None if this adapter manages its own session detection.
+        When you add a new adapter, override this to point at its sessions root.
+        """
+        return None

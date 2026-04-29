@@ -246,6 +246,33 @@ def find_session_key(session_id: str) -> str | None:
     return None
 
 
+def find_session_backend(session_id: str) -> str | None:
+    """Return the adapter name that owns session_id, or None.
+
+    Iterates every registered adapter's sessions_root(). Each root's direct
+    subdirectories are expected to contain a sessions/{session_id}.jsonl file.
+    When a new adapter is added, only its sessions_root() classmethod needs to
+    be implemented — this function requires no changes.
+    """
+    from services.cowork_agent.adapter_registry import get_sessions_roots
+
+    for adapter_name, root in get_sessions_roots().items():
+        if not root.exists():
+            continue
+        for agent_dir in root.iterdir():
+            if not agent_dir.is_dir() or agent_dir.name.startswith("."):
+                continue
+            if (agent_dir / "sessions" / f"{session_id}.jsonl").exists():
+                return adapter_name
+
+    # Legacy claude_code format: ~/claude-cowork/{agent_id}/.sessions/*.json
+    from services.cowork_agent.claude_sessions import load_session
+    if load_session(session_id) is not None:
+        return "claude_code"
+
+    return None
+
+
 def update_session_directory(session_id: str, directory: str) -> bool:
     """Persist selected workspace directory on the matching sessions.json entry."""
     if not AGENTS_DIR.exists():
